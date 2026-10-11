@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Hand Engine 3D — управление жестами</title>
+<style>
+  :root { color-scheme: dark; --bg:#07101c; --panel:#101d2d; --line:#233b56; --cyan:#56d9ff; --text:#edf7ff; --muted:#a7bbcf; }
+  * { box-sizing:border-box }
+  body { margin:0; background:radial-gradient(ellipse at top,#10243a,#050a12 70%); color:var(--text); font:15px system-ui,-apple-system,Segoe UI,sans-serif; }
+  header { padding:16px 16px 8px; max-width:1100px; margin:auto }
+  h1 { font-size:clamp(22px,4vw,32px); margin:0 0 5px; letter-spacing:.2px }
+  .sub { color:var(--muted); font-size:14px; line-height:1.45 }
+  main { max-width:1100px; margin:auto; padding:8px 12px 24px; display:grid; grid-template-columns:minmax(0,1.5fr) minmax(270px,1fr); gap:12px }
+  .panel { background:linear-gradient(145deg,rgba(17,32,49,.96),rgba(8,17,29,.96)); border:1px solid var(--line); border-radius:16px; overflow:hidden; box-shadow:0 12px 30px #0004 }
+  .stage { position:relative; min-height:340px; height:min(65vh,560px); }
+  #scene { width:100%; height:100%; display:block; touch-action:pan-y }
+  .hud { position:absolute; left:12px; right:12px; top:12px; display:flex; justify-content:space-between; gap:8px; pointer-events:none; flex-wrap:wrap }
+  .pill { background:#06101ddd; border:1px solid #29445e; padding:7px 10px; border-radius:999px; font-size:12px; color:#d9f5ff }
+  .controls { padding:14px; display:flex; flex-direction:column; gap:12px }
+  .row { display:flex; gap:8px; flex-wrap:wrap }
+  button { border:1px solid #35536d; background:#172a3d; color:var(--text); border-radius:10px; padding:11px 13px; font:600 14px system-ui; cursor:pointer; }
+  button.primary { background:linear-gradient(135deg,#087da4,#1453a3); border-color:#4bc9ef }
+  button:disabled { opacity:.55; cursor:wait }
+  .status { padding:10px 12px; background:#071421; border:1px solid #203b52; border-radius:10px; color:#bfeeff; line-height:1.4; font-size:13px; }
+  label { display:flex; justify-content:space-between; gap:12px; color:#dceaf5; font-size:13px; align-items:center }
+  input[type=range] { width:55%; accent-color:var(--cyan) }
+  .hint { color:var(--muted); font-size:13px; line-height:1.5 }
+  .videoWrap { position:relative; background:#02070d; border-radius:12px; overflow:hidden; aspect-ratio:4/3; }
+  #video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); display:block }
+  #overlay { position:absolute; inset:0; width:100%; height:100%; transform:scaleX(-1); pointer-events:none }
+  .smallTitle { font-size:15px; margin:0 0 10px; }
+  .legend { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .legend div { border:1px solid #213b53; border-radius:10px; padding:9px; color:#c8d9e8; font-size:12px; line-height:1.4 }
+  .legend b { display:block; color:#71ddff; margin-bottom:3px; font-size:13px }
+  .footer { max-width:1100px; padding:0 16px 22px; margin:auto; color:#8199ad; font-size:12px; line-height:1.5 }
+  @media(max-width:760px){ main{grid-template-columns:1fr} .stage{height:48vh;min-height:300px} }
+</style>
+</head>
+<body>
+<header>
+  <h1>HAND ENGINE 3D</h1>
+  <div class="sub">Прототип: управляй 3D-моделью двигателя жестами перед камерой. Нужны интернет для загрузки библиотек и разрешение на камеру.</div>
+</header>
+<main>
+  <section class="panel stage">
+    <canvas id="scene"></canvas>
+    <div class="hud"><span class="pill" id="objectLabel">3D-двигатель · демонстрационная модель</span><span class="pill" id="gestureLabel">Жест: ожидание</span></div>
+  </section>
+  <section class="panel controls">
+    <div class="row">
+      <button class="primary" id="startBtn">▶ Включить камеру</button>
+      <button id="stopBtn" disabled>Остановить</button>
+      <button id="resetBtn">Сбросить модель</button>
+    </div>
+    <div class="status" id="status">Готово. Нажми «Включить камеру» и разреши доступ к камере.</div>
+    <div class="videoWrap">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div>
+      <h2 class="smallTitle">Управление жестами</h2>
+      <div class="legend">
+        <div><b>☝ Указательный палец</b>Двигай рукой — перемещай двигатель по экрану.</div>
+        <div><b>🤏 Щипок</b>Соедини большой и указательный пальцы и двигай рукой, чтобы вращать модель.</div>
+        <div><b>✌ Два пальца</b>Разведи/сведи указательный и средний — масштаб модели.</div>
+        <div><b>✊ Кулак</b>Покажи кулак примерно на секунду — зафиксировать/разблокировать движение.</div>
+      </div>
+    </div>
+    <label>Чувствительность <input id="sensitivity" type="range" min="3" max="15" value="8"></label>
+    <label>Размер модели <input id="scale" type="range" min="60" max="150" value="100"></label>
+    <div class="hint">Совет: держи руку на расстоянии 30–70 см, при хорошем освещении и на фоне, где пальцы хорошо видны. В этом прототипе двигатель — процедурная 3D-модель, а не точная инженерная CAD-модель.</div>
+  </section>
+</main>
+<div class="footer">Камера обрабатывается в браузере. Видео не отправляется на сервер этим файлом. Библиотеки загружаются с CDN. Если камера не запускается при открытии файла, браузер может требовать HTTPS или localhost; см. инструкцию после кнопок.</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const canvas = $('scene'), video = $('video'), overlay = $('overlay');
+  const status = $('status'), gestureLabel = $('gestureLabel');
+  let renderer, scene, camera, engine, hands, cameraFeed, running=false, locked=false;
+  let handX=.5, handY=.5, lastX=.5, lastY=.5, pinchWas=false, lastPinchX=.5, lastPinchY=.5;
+  let lastTwoDist=0, fistStart=0, fistToggled=false, lastGesture='ожидание';
+  let targetX=0, targetY=0, targetRotX=.18, targetRotY=.4, targetScale=1;
+  let baseScale=1, smoothX=0, smoothY=0;
+  const mats = {
+    metal:new THREE.MeshStandardMaterial({color:0x9fb2c2,metalness:.82,roughness:.28}),
+    dark:new THREE.MeshStandardMaterial({color:0x26394b,metalness:.72,roughness:.35}),
+    copper:new THREE.MeshStandardMaterial({color:0xd8874a,metalness:.8,roughness:.25}),
+    blue:new THREE.MeshStandardMaterial({color:0x1c9bc5,metalness:.65,roughness:.25}),
+    glow:new THREE.MeshStandardMaterial({color:0x44d9ff,emissive:0x087eaa,emissiveIntensity:1.2,metalness:.3,roughness:.25})
+  };
+  function init3D(){
+    renderer = new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.setSize(canvas.clientWidth,canvas.clientHeight,false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(38,canvas.clientWidth/canvas.clientHeight,.1,100);
+    camera.position.set(0,1.1,8.7);
+    scene.add(new THREE.HemisphereLight(0xbfeaff,0x182334,2.1));
+    const key = new THREE.DirectionalLight(0xffffff,3.2); key.position.set(4,6,5); scene.add(key);
+    const rim = new THREE.PointLight(0x20bfff,22,18); rim.position.set(-4,1,2); scene.add(rim);
+    const floor = new THREE.GridHelper(14,28,0x1c5a78,0x153047); floor.position.y=-2.15; scene.add(floor);
+    engine = new THREE.Group(); scene.add(engine);
+    buildEngine();
+    window.addEventListener('resize',resize);
+    animate();
+  }
+  function mesh(geo,mat,x,y,z,rx=0,ry=0,rz=0,parent=engine){
+    const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); m.rotation.set(rx,ry,rz); parent.add(m); return m;
+  }
+  function buildEngine(){
+    // Stylized inline four-cylinder engine block
+    mesh(new THREE.BoxGeometry(2.65,1.45,1.2),mats.dark,0,-.25,0);
+    mesh(new THREE.BoxGeometry(2.8,.24,1.32),mats.metal,0,.58,0);
+    mesh(new THREE.BoxGeometry(2.9,.22,1.36),mats.dark,0,-1.02,0);
+    for(let i=0;i<4;i++){
+      const x=-.91+i*.61;
+      mesh(new THREE.CylinderGeometry(.255,.255,.68,32),mats.metal,x,.98,0);
+      mesh(new THREE.CylinderGeometry(.29,.29,.10,32),mats.copper,x,1.34,0);
+      mesh(new THREE.CylinderGeometry(.19,.19,.06,24),mats.dark,x,1.43,0);
+      mesh(new THREE.BoxGeometry(.28,.08,.1),mats.glow,x,1.5,.02);
+      // front-facing bolt
+      mesh(new THREE.CylinderGeometry(.055,.055,.045,12),mats.copper,x,-.23,.63,Math.PI/2);
+    }
+    // crankshaft and pulleys
+    const shaft=mesh(new THREE.CylinderGeometry(.11,.11,3.25,24),mats.copper,0,-.45,.85,0,0,Math.PI/2);
+    for(let i=0;i<5;i++){
+      const x=-1.25+i*.625;
+      mesh(new THREE.CylinderGeometry(.22,.22,.12,32),i%2?mats.dark:mats.blue,x,-.45,.88,0,0,Math.PI/2);
+    }
+    // top rails and pipes
+    mesh(new THREE.CylinderGeometry(.075,.075,2.35,16),mats.blue,0,.88,-.48,0,0,Math.PI/2);
+    mesh(new THREE.CylinderGeometry(.075,.075,2.35,16),mats.copper,0,.68,-.48,0,0,Math.PI/2);
+    for(let i=0;i<4;i++){
+      const x=-.9+i*.6;
+      mesh(new THREE.BoxGeometry(.16,.35,.16),mats.metal,x,.75,-.46);
+    }
+    // side casing and bolts
+    mesh(new THREE.BoxGeometry(.42,.78,.16),mats.blue,1.48,-.25,.15);
+    for(let i=0;i<6;i++){
+      mesh(new THREE.SphereGeometry(.055,12,12),mats.copper,-1.15+(i%3)*1.15,-.75+Math.floor(i/3)*.85,.64);
+    }
+    // exhaust/intake tubes
+    for(let i=0;i<4;i++){
+      const x=-.9+i*.6;
+      const pipe=mesh(new THREE.TorusGeometry(.20,.065,12,32,Math.PI*1.25),mats.metal,x,.08,-.74,Math.PI/2,0,0);
+    }
+  }
+  function resize(){
+    if(!renderer||!camera)return;
+    const w=canvas.clientWidth,h=canvas.clientHeight;
+    renderer.setSize(w,h,false); camera.aspect=w/h; camera.updateProjectionMatrix();
+    const r=overlay.getBoundingClientRect(); overlay.width=Math.max(1,Math.floor(r.width*devicePixelRatio)); overlay.height=Math.max(1,Math.floor(r.height*devicePixelRatio));
+  }
+  function animate(){
+    requestAnimationFrame(animate);
+    if(engine){
+      engine.position.x += (targetX-engine.position.x)*.12;
+      engine.position.y += (targetY-engine.position.y)*.12;
+      engine.rotation.x += (targetRotX-engine.rotation.x)*.12;
+      engine.rotation.y += (targetRotY-engine.rotation.y)*.12;
+      const s=targetScale*Number($('scale').value)/100;
+      engine.scale.setScalar(s);
+      renderer.render(scene,camera);
+    }
+  }
+  function drawLandmarks(lm){
+    const c=overlay.getContext('2d'), w=overlay.width,h=overlay.height;
+    c.clearRect(0,0,w,h);
+    if(!lm)return;
+    c.lineWidth=Math.max(2,devicePixelRatio*2); c.strokeStyle='#5ee5ff'; c.fillStyle='#ffffff';
+    const links=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+    for(const [a,b] of links){c.beginPath();c.moveTo(lm[a].x*w,lm[a].y*h);c.lineTo(lm[b].x*w,lm[b].y*h);c.stroke();}
+    for(const p of lm){c.beginPath();c.arc(p.x*w,p.y*h,Math.max(2.5,devicePixelRatio*3),0,Math.PI*2);c.fill();}
+  }
+  function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+  function onResults(results){
+    const lm=results.multiHandLandmarks&&results.multiHandLandmarks[0];
+    drawLandmarks(lm);
+    if(!lm){gestureLabel.textContent='Жест: рука не найдена';lastGesture='рука не найдена';return;}
+    // mirrored preview; invert x so movement feels natural
+    const ix=1-lm[9].x, iy=lm[9].y;
+    const thumb=lm[4], index=lm[8], middle=lm[12], ring=lm[16], pinky=lm[20];
+    const pinch=dist(thumb,index)<.065;
+    const two=dist(index,middle)>.045 && index.y<lm[6].y && middle.y<lm[10].y;
+    const indexUp=index.y<lm[6].y, middleUp=middle.y<lm[10].y, ringUp=ring.y<lm[14].y, pinkyUp=pinky.y<lm[18].y;
+    const fist=!indexUp&&!middleUp&&!ringUp&&!pinkyUp;
+    const now=performance.now();
+    if(fist){
+      if(!fistStart)fistStart=now;
+      if(now-fistStart>950&&!fistToggled){locked=!locked;fistToggled=true;status.textContent=locked?'Движение зафиксировано. Покажи кулак ещё раз, чтобы разблокировать.':'Движение разблокировано.';}
+    } else {fistStart=0;fistToggled=false;}
+    if(!locked){
+      const sens=Number($('sensitivity').value)/8;
+      if(pinch){
+        if(pinchWas){
+          const dx=ix-lastPinchX,dy=iy-lastPinchY;
+          targetRotY += dx*5.2*sens;
+          targetRotX += dy*4.0*sens;
+        }
+        lastPinchX=ix;lastPinchY=iy;
+        lastGesture='щипок — вращение';
+      } else if(two){
+        const d=dist(index,middle);
+        if(lastTwoDist>0) targetScale=Math.max(.55,Math.min(1.65,targetScale+(d-lastTwoDist)*4.5));
+        lastTwoDist=d;
+        lastGesture='два пальца — масштаб';
+      } else {
+        targetX=Math.max(-2.1,Math.min(2.1,(ix-.5)*5.0));
+        targetY=Math.max(-1.2,Math.min(1.35,(.5-iy)*3.5));
+        lastTwoDist=0;
+        lastGesture='движение руки — перемещение';
+      }
+    } else lastGesture='зафиксировано';
+    pinchWas=pinch;
+    gestureLabel.textContent='Жест: '+lastGesture;
+    status.textContent=locked?'Модель зафиксирована. Кулак удерживать ~1 секунду для разблокировки.':'Рука найдена! '+lastGesture+'.';
+  }
+  async function start(){
+    if(running)return;
+    $('startBtn').disabled=true; status.textContent='Запрашиваю доступ к камере…';
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+      video.srcObject=stream; await video.play();
+      hands=new Hands({locateFile:(file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`});
+      hands.setOptions({maxNumHands:1,modelComplexity:1,minDetectionConfidence:.6,minTrackingConfidence:.55});
+      hands.onResults(onResults);
+      cameraFeed=new Camera(video,{onFrame:async()=>{if(hands&&running)await hands.send({image:video});},width:640,height:480});
+      running=true; await cameraFeed.start();
+      $('stopBtn').disabled=false;
+      status.textContent='Камера включена. Покажи руку в окне и попробуй жесты.';
+    }catch(e){
+      $('startBtn').disabled=false;
+      status.textContent='Не удалось запустить камеру: '+(e.message||e)+'. Проверь разрешение камеры и открой файл в Chrome через HTTPS/localhost. На некоторых устройствах file:// не разрешает камеру.';
+      const s=video.srcObject;if(s)s.getTracks().forEach(t=>t.stop());
+    }
+  }
+  function stop(){
+    running=false;
+    if(cameraFeed){try{cameraFeed.stop()}catch(e){} cameraFeed=null;}
+    if(video.srcObject){video.srcObject.getTracks().forEach(t=>t.stop());video.srcObject=null;}
+    if(hands){try{hands.close()}catch(e){}hands=null;}
+    $('startBtn').disabled=false;$('stopBtn').disabled=true;
+    status.textContent='Камера остановлена.';gestureLabel.textContent='Жест: ожидание';
+    const c=overlay.getContext('2d');c.clearRect(0,0,overlay.width,overlay.height);
+  }
+  $('startBtn').addEventListener('click',start);
+  $('stopBtn').addEventListener('click',stop);
+  $('resetBtn').addEventListener('click',()=>{targetX=0;targetY=0;targetRotX=.18;targetRotY=.4;targetScale=1;locked=false;status.textContent='Модель сброшена.';});
+  window.addEventListener('pagehide',stop);
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    status.textContent='Браузер не предоставляет доступ к камере в этом режиме. Попробуй актуальный Chrome и HTTPS/localhost.';
+  }
+  init3D(); resize();
+})();
+</script>
+</body>
+</html>
